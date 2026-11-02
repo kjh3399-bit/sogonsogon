@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#6657d9">
+<title>소곤소곤 - 음성 녹음</title>
+<style>
+:root{--purple:#6657d9;--deep:#40358f;--pale:#f1efff;--ink:#25233a;--muted:#77758b}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:linear-gradient(145deg,#f7f5ff,#eaf4ff);font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;color:var(--ink);display:flex;justify-content:center;align-items:center;padding:22px}
+.app{width:min(100%,480px);background:#fff;border-radius:30px;padding:28px 22px 24px;box-shadow:0 18px 55px #5145a51c;text-align:center}
+.logo{width:66px;height:66px;margin:0 auto 12px;border-radius:22px;background:var(--pale);display:grid;place-items:center;font-size:31px}
+h1{font-size:27px;margin:0}.sub{color:var(--muted);font-size:14px;margin:7px 0 24px}
+.timer{font-size:48px;font-weight:750;letter-spacing:2px;font-variant-numeric:tabular-nums;margin:15px 0 20px}
+.mic-wrap{height:160px;display:grid;place-items:center;position:relative;margin-bottom:16px}
+.mic{width:116px;height:116px;border-radius:50%;background:var(--pale);display:grid;place-items:center;font-size:48px;transition:.2s}
+.mic.recording{background:#ffe9ed;box-shadow:0 0 0 13px #ffe9ed80;animation:pulse 1.5s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 24px #ffe9ed30}}
+.status{font-size:14px;color:var(--muted);min-height:22px;margin-bottom:18px}
+.controls{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+button{border:0;border-radius:16px;padding:14px 18px;font-size:15px;font-weight:700;cursor:pointer;min-width:105px}
+button:disabled{opacity:.38;cursor:not-allowed}
+.primary{background:var(--purple);color:white;min-width:145px}
+.secondary{background:var(--pale);color:var(--deep)}
+.danger{background:#fff0f1;color:#c34255}
+.panel{margin-top:25px;padding:18px;background:#faf9ff;border:1px solid #eeecfb;border-radius:20px;text-align:left}
+.panel h2{font-size:16px;margin:0 0 12px}
+audio{width:100%;margin:5px 0 12px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.actions button{flex:1;min-width:110px;padding:11px;font-size:13px}
+.empty{font-size:13px;color:#9693a8;text-align:center;padding:8px 0}
+.note{font-size:12px;line-height:1.6;color:#8a879b;margin:18px 3px 0}
+</style>
+</head>
+<body>
+<main class="app">
+  <div class="logo">🎙️</div>
+  <h1>소곤소곤</h1>
+  <p class="sub">간편하게 녹음하고 파일로 저장하세요</p>
+  <div class="timer" id="timer">00:00</div>
+  <div class="mic-wrap"><div class="mic" id="mic">🎤</div></div>
+  <div class="status" id="status">녹음 버튼을 눌러 시작하세요.</div>
+  <div class="controls">
+    <button class="primary" id="start">● 녹음 시작</button>
+    <button class="secondary" id="pause" disabled>Ⅱ 일시정지</button>
+    <button class="danger" id="stop" disabled>■ 녹음 종료</button>
+  </div>
+  <section class="panel">
+    <h2>내 녹음</h2>
+    <div id="result" class="empty">아직 녹음된 파일이 없습니다.</div>
+    <audio id="player" controls hidden></audio>
+    <div class="actions">
+      <button class="secondary" id="download" disabled>⬇ 파일 저장</button>
+      <button class="danger" id="clear" disabled>삭제</button>
+    </div>
+  </section>
+  <p class="note">녹음은 이 브라우저 안에서 처리됩니다. 마이크 사용을 허용해야 하며, 파일 저장을 누르기 전에는 기기에 별도 파일로 저장되지 않습니다. 공용 기기에서는 녹음 파일을 사용 후 삭제하세요.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let recorder=null, chunks=[], stream=null, blob=null, url=null, elapsed=0, startedAt=0, ticker=null, paused=false;
+function timeText(s){const m=Math.floor(s/60), sec=s%60;return String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')}
+function showTime(){ $('timer').textContent=timeText(elapsed); }
+function stopTicker(){if(ticker){clearInterval(ticker);ticker=null}}
+function releaseMic(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+function resetControls(){ $('start').disabled=false;$('pause').disabled=true;$('stop').disabled=true;$('pause').textContent='Ⅱ 일시정지';$('mic').classList.remove('recording')}
+$('start').addEventListener('click',async()=>{
+  if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder){$('status').textContent='이 브라우저에서는 녹음을 지원하지 않습니다. 최신 Chrome을 이용해 주세요.';return}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    chunks=[];elapsed=0;showTime();paused=false;
+    const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4'].find(t=>MediaRecorder.isTypeSupported(t));
+    recorder=new MediaRecorder(stream,mime?{mimeType:mime}:{});
+    recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+    recorder.onstop=()=>{
+      blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
+      if(url)URL.revokeObjectURL(url);
+      url=URL.createObjectURL(blob);
+      $('player').src=url;$('player').hidden=false;
+      $('result').textContent='녹음이 완성되었습니다. 아래에서 들어보세요.';
+      $('download').disabled=false;$('clear').disabled=false;
+      $('status').textContent='녹음이 저장 준비되었습니다.';releaseMic();resetControls();
+    };
+    recorder.start();startedAt=Date.now();ticker=setInterval(()=>{elapsed=Math.floor((Date.now()-startedAt)/1000);showTime()},250);
+    $('start').disabled=true;$('pause').disabled=false;$('stop').disabled=false;$('mic').classList.add('recording');
+    $('status').textContent='🔴 녹음 중입니다. 주변 소리를 조용히 담아보세요.';
+  }catch(e){$('status').textContent='마이크를 사용할 수 없습니다. 브라우저의 마이크 권한을 확인해 주세요.';releaseMic()}
+});
+$('pause').addEventListener('click',()=>{
+  if(!recorder)return;
+  if(!paused){recorder.pause();elapsed=Math.floor((Date.now()-startedAt)/1000);stopTicker();paused=true;$('pause').textContent='▶ 이어 녹음';$('mic').classList.remove('recording');$('status').textContent='일시정지 상태입니다.'}
+  else{recorder.resume();startedAt=Date.now()-elapsed*1000;ticker=setInterval(()=>{elapsed=Math.floor((Date.now()-startedAt)/1000);showTime()},250);paused=false;$('pause').textContent='Ⅱ 일시정지';$('mic').classList.add('recording');$('status').textContent='🔴 다시 녹음 중입니다.'}
+});
+$('stop').addEventListener('click',()=>{
+  if(recorder&&recorder.state!=='inactive'){if(!paused)elapsed=Math.floor((Date.now()-startedAt)/1000);showTime();stopTicker();recorder.stop();$('status').textContent='녹음 파일을 정리하고 있습니다...'}
+});
+$('download').addEventListener('click',()=>{
+  if(!blob)return;
+  const ext=(blob.type.includes('mp4')?'m4a':'webm');
+  const a=document.createElement('a');a.href=url;a.download='소곤소곤_녹음.'+ext;a.click();
+});
+$('clear').addEventListener('click',()=>{
+  if(recorder&&recorder.state!=='inactive')recorder.stop();
+  stopTicker();releaseMic();if(url)URL.revokeObjectURL(url);
+  recorder=null;blob=null;url=null;chunks=[];elapsed=0;showTime();
+  $('player').pause();$('player').removeAttribute('src');$('player').hidden=true;
+  $('result').textContent='아직 녹음된 파일이 없습니다.';$('download').disabled=true;$('clear').disabled=true;
+  $('status').textContent='녹음 버튼을 눌러 시작하세요.';resetControls();
+});
+window.addEventListener('pagehide',()=>{stopTicker();releaseMic();if(url)URL.revokeObjectURL(url)});
+</script>
+</body>
+</html>
